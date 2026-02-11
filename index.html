@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GeoScaler | Spatial Expansion Utility</title>
+
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2220%22 fill=%22%234f46e5%22/><path d=%22M30 30 L45 30 M30 30 L30 45 M70 70 L55 70 M70 70 L70 55 M70 30 L55 30 M70 30 L70 45 M30 70 L45 70 M30 70 L30 55%22 stroke=%22white%22 stroke-width=%228%22 stroke-linecap=%22round%22/></svg>">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.css" />
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.min.js"></script>
+    <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+    <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script src="https://unpkg.com/shpjs@latest/dist/shp.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+
+    <style>
+        :root {
+            --primary: #4f46e5;
+            --primary-hover: #4338ca;
+            --surface: #ffffff;
+            --bg: #f8fafc;
+            --border: #e2e8f0;
+            --text: #0f172a;
+            --text-muted: #64748b;
+        }
+
+        body { margin: 0; padding: 0; font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+        /* HEADER */
+        header {
+            height: 64px; background: var(--surface); border-bottom: 1px solid var(--border);
+            display: flex; align-items: center; justify-content: space-between; padding: 0 2rem;
+            z-index: 20; box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1);
+        }
+        .brand { font-weight: 700; font-size: 1.25rem; display: flex; align-items: center; gap: 10px; color: var(--text); }
+        .badge { background: #e0e7ff; color: var(--primary); font-size: 0.75rem; padding: 2px 8px; border-radius: 99px; font-weight: 600; }
+
+        /* MAIN LAYOUT */
+        .workspace { display: flex; flex: 1; height: calc(100vh - 64px); }
+
+        /* SIDEBAR */
+        .sidebar {
+            width: 360px; background: var(--surface); border-right: 1px solid var(--border);
+            padding: 1.5rem; display: flex; flex-direction: column; gap: 1.5rem; z-index: 10;
+            overflow-y: auto;
+        }
+
+        .section-title {
+            margin: 0 0 0.75rem 0; font-size: 0.75rem; text-transform: uppercase;
+            letter-spacing: 0.05em; color: var(--text-muted); font-weight: 600;
+        }
+
+        /* UPLOAD ZONE */
+        .upload-zone {
+            border: 2px dashed var(--border); border-radius: 12px; padding: 2rem 1.5rem;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            text-align: center; cursor: pointer; transition: 0.2s; background: #f8fafc;
+        }
+        .upload-zone:hover { border-color: var(--primary); background: #eef2ff; }
+        .upload-icon { color: var(--text-muted); margin-bottom: 1rem; width: 48px; height: 48px; }
+        .file-status { margin-top: 10px; font-size: 0.9rem; font-weight: 500; color: var(--primary); display: none; }
+
+        /* CONTROLS */
+        .control-group { background: #f8fafc; padding: 1rem; border-radius: 8px; border: 1px solid var(--border); }
+
+        .slider-header { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 0.9rem; font-weight: 500; }
+        input[type=range] { width: 100%; accent-color: var(--primary); cursor: pointer; }
+
+        .info-text { font-size: 0.8rem; color: var(--text-muted); margin-top: 8px; line-height: 1.4; }
+
+        /* FOOTER ACTIONS */
+        .actions { margin-top: auto; display: flex; flex-direction: column; gap: 12px; }
+        .btn {
+            border: none; padding: 0.85rem; border-radius: 8px; font-weight: 600; cursor: pointer;
+            display: flex; align-items: center; justify-content: center; gap: 8px; transition: 0.2s; font-size: 0.95rem;
+        }
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-primary:hover { background: var(--primary-hover); }
+        .btn-primary:disabled { background: #cbd5e1; cursor: not-allowed; }
+
+        .btn-secondary { background: white; border: 1px solid var(--border); color: var(--text); }
+        .btn-secondary:hover { background: #f1f5f9; }
+        .btn-secondary.active { background: #e0e7ff; color: var(--primary); border-color: var(--primary); }
+
+        /* MAP */
+        #map { flex: 1; background: #e5e7eb; position: relative; }
+
+        /* LOADER */
+        .loader {
+            position: fixed; inset: 0; background: rgba(255,255,255,0.9); z-index: 1000;
+            display: none; align-items: center; justify-content: center; flex-direction: column;
+        }
+        .spinner {
+            width: 40px; height: 40px; border: 4px solid #e2e8f0; border-top-color: var(--primary);
+            border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 1rem;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* FOOTER */
+        footer {
+            margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--border);
+            display: flex; flex-direction: column; gap: 0.5rem; font-size: 0.85rem;
+        }
+        .footer-row { display: flex; gap: 10px; align-items: center; color: var(--text-muted); }
+        .footer-link { color: var(--text-muted); text-decoration: none; transition: 0.2s; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+        .footer-link:hover { color: var(--primary); }
+
+        input[type="file"] { display: none; }
+    </style>
+</head>
+<body>
+
+<header>
+    <div class="brand">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+        GeoScaler
+        <span class="badge">v1.0</span>
+    </div>
+    <a href="https://github.com/KeaganGilmore/geo-scaler/" target="_blank" style="color: var(--text-muted); text-decoration: none; font-size: 0.9rem; font-weight: 500;">Project Repo</a>
+</header>
+
+<div class="workspace">
+    <div class="sidebar">
+
+        <div>
+            <h3 class="section-title">Data Source</h3>
+            <label class="upload-zone" id="dropZone">
+                <input type="file" id="fileInput" accept=".zip,.json,.geojson">
+                <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                <div style="font-weight: 600; color: var(--text);">Click or Drop File</div>
+                <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 4px;">Supports .zip (Shapefile) & GeoJSON</div>
+            </label>
+            <div id="fileStatus" class="file-status">File Loaded Successfully</div>
+        </div>
+
+        <div>
+            <h3 class="section-title">Transformation</h3>
+            <div class="control-group">
+                <div class="slider-header">
+                    <span>Expansion Scale</span>
+                    <span id="scaleVal" style="color: var(--primary); font-weight: 700;">+30%</span>
+                </div>
+                <input type="range" id="scaleSlider" min="-50" max="100" value="30" disabled>
+                <p class="info-text">
+                    Adjusts geometry size relative to centroid.
+                </p>
+            </div>
+
+            <button class="btn btn-secondary" id="editBtn" onclick="toggleEditMode()" disabled style="width: 100%; margin-top: 10px;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                <span id="editBtnText">Enter Manual Edit Mode</span>
+            </button>
+            <p class="info-text" style="display:none; color: var(--primary);" id="editModeInfo">
+                Drag the white markers on the map to reshape polygons manually.
+            </p>
+        </div>
+
+        <div class="actions">
+            <button class="btn btn-primary" id="downloadBtn" disabled onclick="downloadPatchedZip()">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                Process & Download Zip
+            </button>
+            <button class="btn btn-secondary" onclick="resetApp()">Reset</button>
+        </div>
+
+        <footer>
+            <button class="btn btn-primary" onclick="window.open('https://www.paypal.com/paypalme/KeaganGilmore', '_blank')" style="width: 100%; margin-bottom: 1rem;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.42 4.58a5.4 5.4 0 0 0-7.65 0l-.77.78-.77-.78a5.4 5.4 0 0 0-7.65 0C1.46 6.7 1.33 10.28 4 13l8 8 8-8c2.67-2.72 2.54-6.3.42-8.42z"></path></svg>
+                Support This Project
+            </button>
+            <div class="footer-row">
+                <a href="https://github.com/KeaganGilmore/" target="_blank" class="footer-link">Keagan Gilmore</a>
+                <span>|</span>
+                <a href="mailto:keagangilmore@gmail.com" class="footer-link">Email</a>
+            </div>
+            <div class="footer-row">
+                <a href="#" onclick="copyDiscord(event)" class="footer-link" id="discordLink">
+                    <span id="discordText">Discord: keagan2980</span>
+                </a>
+            </div>
+        </footer>
+    </div>
+
+    <div id="map"></div>
+</div>
+
+<div class="loader" id="loader">
+    <div class="spinner"></div>
+    <div id="loaderText" style="font-weight: 600; color: var(--text);">Processing Geometry...</div>
+</div>
+
+<script>
+    // --- MAP INITIALIZATION ---
+    const map = L.map('map').setView([0, 0], 2);
+
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; OpenStreetMap &copy; CARTO',
+        subdomains: 'abcd',
+        maxZoom: 20
+    }).addTo(map);
+
+    // Initialize Leaflet Geoman (Editing Tool)
+    map.pm.setLang('en');
+    map.pm.setGlobalOptions({
+        limitMarkersToCount: 20, // Performance optimization
+        preventMarkerRemoval: false
+    });
+
+    // --- STATE MANAGEMENT ---
+    let originalFile = null;
+    let originalGeoJSON = null;
+    let modifiedGeoJSON = null;
+    let originalLayer = null;
+    let previewLayer = null;
+    let isEditMode = false;
+
+    // --- DOM ELEMENTS ---
+    const fileInput = document.getElementById('fileInput');
+    const dropZone = document.getElementById('dropZone');
+    const scaleSlider = document.getElementById('scaleSlider');
+    const scaleVal = document.getElementById('scaleVal');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const editBtn = document.getElementById('editBtn');
+    const editBtnText = document.getElementById('editBtnText');
+    const editModeInfo = document.getElementById('editModeInfo');
+    const loader = document.getElementById('loader');
+    const loaderText = document.getElementById('loaderText');
+    const fileStatus = document.getElementById('fileStatus');
+
+    // --- EVENT LISTENERS ---
+    fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, (e) => { e.preventDefault(); e.stopPropagation(); }, false);
+    });
+    dropZone.addEventListener('drop', (e) => handleFile(e.dataTransfer.files[0]));
+
+    // Slider Logic
+    scaleSlider.addEventListener('input', (e) => {
+        const val = parseInt(e.target.value);
+        scaleVal.innerText = (val > 0 ? '+' : '') + val + '%';
+        if (!isEditMode) updatePreview(val);
+    });
+
+    // --- CORE LOGIC ---
+
+    async function handleFile(file) {
+        if (!file) return;
+        originalFile = file;
+
+        showLoader(true, "Parsing Spatial Data...");
+        fileStatus.style.display = 'block';
+        fileStatus.innerText = `Loaded: ${file.name}`;
+
+        try {
+            let geojson;
+            if (file.name.toLowerCase().endsWith('.zip')) {
+                const buffer = await file.arrayBuffer();
+                geojson = await shp(buffer);
+            } else if (file.name.toLowerCase().endsWith('.json') || file.name.toLowerCase().endsWith('.geojson')) {
+                const text = await file.text();
+                geojson = JSON.parse(text);
+            } else {
+                throw new Error("Unsupported file format. Please use .zip or .geojson");
+            }
+
+            loadMapData(geojson);
+        } catch (err) {
+            console.error(err);
+            alert("Error: " + err.message);
+            resetApp();
+        }
+        showLoader(false);
+    }
+
+    function loadMapData(data) {
+        if (Array.isArray(data)) {
+            const features = data.flatMap(layer => layer.features);
+            originalGeoJSON = turf.featureCollection(features);
+        } else {
+            originalGeoJSON = data;
+        }
+
+        // Render Original (Grey)
+        if (originalLayer) map.removeLayer(originalLayer);
+        originalLayer = L.geoJSON(originalGeoJSON, {
+            style: { color: '#94a3b8', weight: 1.5, dashArray: '5, 5', fillOpacity: 0.1 },
+            interactive: false
+        }).addTo(map);
+
+        map.fitBounds(originalLayer.getBounds(), { padding: [50, 50] });
+
+        // Enable UI
+        scaleSlider.disabled = false;
+        downloadBtn.disabled = false;
+        editBtn.disabled = false;
+
+        // Initial Preview
+        scaleSlider.value = 30;
+        scaleVal.innerText = "+30%";
+        updatePreview(30);
+    }
+
+    function updatePreview(percentage) {
+        if (!originalGeoJSON || isEditMode) return;
+
+        const factor = 1 + (percentage / 100);
+
+        const newFeatures = originalGeoJSON.features.map(f => {
+            try {
+                return turf.transformScale(f, factor);
+            } catch (err) { return f; }
+        });
+
+        modifiedGeoJSON = turf.featureCollection(newFeatures);
+        renderPreviewLayer(modifiedGeoJSON);
+    }
+
+    function renderPreviewLayer(geojson) {
+        if (previewLayer) {
+            map.removeLayer(previewLayer);
+        }
+
+        previewLayer = L.geoJSON(geojson, {
+            style: { color: '#4f46e5', weight: 2, fillOpacity: 0.35 }
+        }).addTo(map);
+
+        // Hook up Geoman events to the new layer if needed
+        if (isEditMode) {
+            enableLayerEditing();
+        }
+    }
+
+    // --- MANUAL EDITING LOGIC ---
+
+    function toggleEditMode() {
+        isEditMode = !isEditMode;
+
+        if (isEditMode) {
+            // Enter Edit Mode
+            editBtn.classList.add('active');
+            editBtnText.innerText = "Finish Editing";
+            editModeInfo.style.display = 'block';
+            scaleSlider.disabled = true; // Disable slider to prevent conflicts
+
+            enableLayerEditing();
+        } else {
+            // Exit Edit Mode (Save changes)
+            editBtn.classList.remove('active');
+            editBtnText.innerText = "Enter Manual Edit Mode";
+            editModeInfo.style.display = 'none';
+            scaleSlider.disabled = false;
+
+            saveEditedGeometry();
+        }
+    }
+
+    function enableLayerEditing() {
+        if (!previewLayer) return;
+
+        // Enable editing on every layer inside the GeoJSON group
+        previewLayer.eachLayer(layer => {
+            if (layer.pm) {
+                layer.pm.enable({
+                    allowSelfIntersection: false,
+                    draggable: true
+                });
+            }
+        });
+    }
+
+    function saveEditedGeometry() {
+        if (!previewLayer) return;
+
+        // Convert the Leaflet layers back to GeoJSON
+        const editedFeatures = [];
+        previewLayer.eachLayer(layer => {
+            // Disable PM mode first
+            if (layer.pm) layer.pm.disable();
+
+            // Get GeoJSON
+            const feature = layer.toGeoJSON();
+            editedFeatures.push(feature);
+        });
+
+        // Update the master data source
+        modifiedGeoJSON = turf.featureCollection(editedFeatures);
+    }
+
+    // --- ZIP PATCHING & DOWNLOAD ---
+
+    async function downloadPatchedZip() {
+        // Ensure we capture any pending edits
+        if (isEditMode) toggleEditMode();
+
+        if (!modifiedGeoJSON || !originalFile) return;
+
+        showLoader(true, "Repacking Zip File...");
+
+        try {
+            const zip = new JSZip();
+
+            if (originalFile.name.toLowerCase().endsWith('.zip')) {
+                const originalBuffer = await originalFile.arrayBuffer();
+                await zip.loadAsync(originalBuffer);
+            }
+
+            const baseName = originalFile.name.replace(/\.[^/.]+$/, "");
+            const jsonString = JSON.stringify(modifiedGeoJSON);
+            zip.file(`${baseName}_scaled.geojson`, jsonString);
+
+            const content = await zip.generateAsync({ type: "blob" });
+            saveAs(content, `${baseName}_processed.zip`);
+
+        } catch (err) {
+            console.error(err);
+            alert("Error generating zip: " + err.message);
+        }
+
+        showLoader(false);
+    }
+
+    // --- UTILS ---
+    function showLoader(visible, text = "") {
+        loader.style.display = visible ? 'flex' : 'none';
+        if (text) loaderText.innerText = text;
+    }
+
+    function copyDiscord(e) {
+        e.preventDefault();
+        const text = "keagan2980";
+        navigator.clipboard.writeText(text).then(() => {
+            const el = document.getElementById('discordText');
+            const original = el.innerText;
+            el.innerText = "Copied!";
+            el.style.color = "var(--primary)";
+            setTimeout(() => {
+                el.innerText = original;
+                el.style.color = "";
+            }, 2000);
+        });
+    }
+
+    function resetApp() {
+        if (originalLayer) map.removeLayer(originalLayer);
+        if (previewLayer) map.removeLayer(previewLayer);
+        originalGeoJSON = null;
+        modifiedGeoJSON = null;
+        originalFile = null;
+        isEditMode = false;
+
+        fileInput.value = '';
+        fileStatus.style.display = 'none';
+        scaleSlider.disabled = true;
+        downloadBtn.disabled = true;
+        editBtn.disabled = true;
+        editBtn.classList.remove('active');
+        editBtnText.innerText = "Enter Manual Edit Mode";
+        editModeInfo.style.display = 'none';
+
+        scaleVal.innerText = "0%";
+        scaleSlider.value = 0;
+    }
+
+</script>
+
+</body>
+</html>
